@@ -1,0 +1,206 @@
+- hosts: localhost
+  become: yes
+  gather_facts: false  # If you want to hide the host key verification option then use gather_facts: false
+  vars:  # Inline Variables
+    aws_access_key: "aws_access"
+    aws_secret_key: "aws_secret"
+    title: "ARTH"
+    vpc_name: "vamsi_vpc"
+    igw_name: "vamsi_igw"
+    pubsub_name: "pubsub"
+    pubroute_table_name: "pubsub_rt"
+    pvtsub_name: "pvtsub"
+    pvtroute_table_name: "pvtsub_rt"
+    security_group_name: "vamsi_sg"
+    vpc_cidr_block: "11.0.0.0/16"
+    pubsub_cidr_block: "11.0.1.0/24"
+    pvtsub_cidr_block: "11.0.2.0/24"
+    destination_cidr_block: "0.0.0.0/0"
+    port22_cidr_block: "0.0.0.0/0"
+    region: "eu-west-1"
+    pubzone: "eu-west-1a"
+    pvtzone: "eu-west-1b"
+    image_id: "ami-04149c54d7c56180d"
+    type: "t2.micro"
+    instance_name: "vamc-EC2"
+    alb_name: "vamsi-elb"
+    asg_name: "vamsi-asg"
+    launch_config_name: "vamsi-launch-config"
+  tasks:
+    # VPC Creation
+    - name: "VPC Creation"
+      ec2_vpc_net:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        cidr_block: "{{ vpc_cidr_block }}"
+        name: "{{ vpc_name }}"
+        region: "{{ region }}"
+        dns_support: yes
+        dns_hostnames: yes
+        tenancy: default
+        state: present
+      register: vpc_created
+
+    # Internet Gateway Creation
+    - name: "Internet Gateway Creation"
+      ec2_vpc_igw:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ igw_name }}"
+      register: igw_created
+
+    # Create VPC Public Subnet
+    - name: "Create VPC Public Subnet"
+      ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ pubzone }}"
+        state: present
+        cidr: "{{ pubsub_cidr_block }}"
+        map_public: yes
+        resource_tags:
+          Name: "{{ pubsub_name }}"
+      register: pubsub_created
+
+    # Create VPC Private Subnet
+    - name: "Create VPC Private Subnet"
+      ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ pvtzone }}"
+        state: present
+        cidr: "{{ pvtsub_cidr_block }}"  # CIDR block for the subnet
+        map_public: no  # whether to enable public IP mapping
+        resource_tags:
+          Name: "{{ pvtsub_name }}"  # Name tag for the subnet
+      register: pvtsub_created
+
+    # Create VPC Public Route Table
+    - name: "Create VPC Public Route Table"
+      ec2_vpc_route_table:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ pubroute_table_name }}"
+        subnets:
+          - "{{ pubsub_created.subnet.id }}"
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_created.gateway_id }}"
+      register: pub_rt
+
+    # Create VPC Private Route Table
+    - name: "Create VPC Private Route Table"
+      ec2_vpc_route_table:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ pvtroute_table_name }}"
+        subnets:
+          - "{{ pvtsub_created.subnet.id }}"
+      register: pvt_rt
+# Create VPC Security Group
+    - name: "Create VPC Security Group"
+      ec2_group:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        name: "{{ security_group_name }}"
+        description: allow
+        tags:
+          Name: vamsi-sg
+        rules:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all traffic
+      register: security_group_created
+
+- name: "Create VPC Security Group"
+  ec2_group:
+    aws_access_key: "{{ aws_access_key }}"
+    aws_secret_key: "{{ aws_secret_key }}"
+    vpc_id: "{{ vpc_created.vpc.id }}"
+    region: "{{ region }}"
+    state: present
+    name: "{{ security_group_name }}"
+    description: allow
+    tags:
+      Name: "{{ security_group_name }}"
+    rules:
+      - proto: all
+        cidr_ip: 0.0.0.0/0
+        rule_desc: allow all traffic
+  register: security_group_created
+
+
+
+
+    - ec2_elb_lb:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        name: "{{ alb_name }}"
+        state: present
+        region: "{{ region }}"
+        security_group_ids: ["{{ security_group_created.group_id }}"]
+        subnets: ["{{ pubsub_created.subnet.id }}"]
+        listeners:
+          - protocol: HTTP
+            load_balancer_port: 80
+            instance_port: 80
+    - ec2_lc:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        name: "{{ launch_config_name }}"
+        image_id: "{{ image_id }}"
+        instance_type: "{{ type }}"
+        key_name: "ireland"
+        region: "{{ region }}"
+        security_groups: "vamsi_sg"
+      register: launch_config
+    - ec2_asg:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        name: "{{ asg_name }}"
+        launch_config_name: "{{ launch_config_name }}"
+        min_size: 2
+        max_size: 4
+        desired_capacity: 2
+        region: "{{ region }}"
+        vpc_zone_identifier:
+          - "{{ pubsub_created.subnet.id }}"
+        tags:
+          - key: "Name"
+            value: "{{ asg_name }}"
+            propagate_at_launch: true
+    - ec2:
+        image: "{{ image_id }}"
+        instance_type: "{{ type }}"
+        region: "{{ region }}"
+        wait: yes
+        count: 1
+        state: present
+        vpc_subnet_id: "{{ pubsubnet_created.subnet.id }}"
+        assign_public_ip: yes
+        group_id: "{{ security_group_created.group_id }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        key_name: "ireland"
+        user_data: "{{ lookup('file', 'data.sh') }}"
+        instance_tags:
+          Name: "{{ instance_name }}
