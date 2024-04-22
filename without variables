@@ -1,1 +1,143 @@
+- name: ansible configuraton
+  hosts: local
+  become: yes
+  gather_facts: no
 
+  tasks:
+    - ec2_vpc_net:
+        aws_access_key: " "
+        aws_secret_key: " "
+        cidr_block: 11.0.0.0/16
+        name: demo-vpc
+        region: ap-south-1
+        state: present
+      register: vpc_created
+    - ec2_vpc_igw:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: ap-south-1
+        state: present
+        tags:
+          Name: demo-igw
+      register: igw_created
+    - ec2_vpc_subnet:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: ap-south-1
+        az: ap-south-1a
+        state: present
+        cidr: 11.0.1.0/24  # Example of a valid CIDR block within the VPC CIDR range
+        map_public: yes
+        resource_tags:
+          Name: pubsub
+      register: pubsub_created
+    - ec2_vpc_subnet:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: ap-south-1
+        az: ap-south-1b
+        state: present
+        cidr: 11.0.2.0/24  # Example of a valid CIDR block within the VPC CIDR range
+        map_public: no
+        resource_tags:
+          Name: pubsub
+      register: pvtsub_created
+    - ec2_vpc_route_table:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "ap-south-1"
+        state: "present"
+        tags:
+          Name: "pub-rt"
+        subnets: ["{{ pubsub_created.subnet.id }}"]
+        # create routes
+        routes:
+          - dest: "0.0.0.0/0"
+            gateway_id: "{{ igw_created.gateway_id }}"
+      register: pub_rt_created
+    - ec2_vpc_route_table:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "ap-south-1"
+        state: "present"
+        tags:
+          Name: "pvt-rt"
+        subnets: ["{{ pvtsub_created.subnet.id }}"]
+      register: pvt_rt_created
+    - ec2_group:
+        aws_access_key: 
+        aws_secret_key: 
+        vpc_id: "{{ vpc_created.vpc.id }}"
+        region: "ap-south-1"
+        state: "present"
+        name: "vamsi-sg"
+        description: "allow"
+        tags:
+          Name: "vamsi-sg"
+        rules:
+          - proto: "all"
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "allow all traffic"
+      register: security_group_created
+    - ec2:
+        image: ami-0451f2687182e0411
+        instance_type: t2.micro
+        region: ap-south-1
+        wait: yes
+        count: 1
+        state: "present"
+        vpc_subnet_id: "{{ pubsub_created.subnet.id }}"
+        assign_public_ip: yes
+        group_id: "{{ security_group_created.group_id }}"
+        aws_access_key: 
+        aws_secret_key: 
+        key_name: "all"  # Replace "your_key_pair_name" with the name of your key pair
+        user_data: "{{ lookup('file', 'data.sh') }}"
+        instance_tags:
+          Name: vamsi-Ec2
+
+#####ELB
+    - ec2_elb_lb:
+        aws_access_key: 
+        aws_secret_key: 
+        name: "demo-elb"
+        state: present
+        region: "ap-south-1"
+        security_group_names: ["vamsi-sg"]
+        subnets: ["{{ pubsub_created.subnet.id }}"]
+        listeners:
+          - protocol: HTTP
+            load_balancer_port: 80
+            instance_port: 80
+
+####ASG
+    - ec2_lc:
+        aws_access_key: 
+        aws_secret_key: 
+        name: "vamsi_launch_config"
+        image_id: "ami-0451f2687182e0411"
+        instance_type: "t2.micro"
+        key_name: "11"
+        region: "ap-south-1"
+        security_groups: "vamsi-sg"
+      register: launch_config
+    - ec2_asg:
+        aws_access_key: ""
+        aws_secret_key: ""
+        name: "demo-asg"
+        launch_config_name: "vamsi_launch_config"
+        min_size: 2
+        max_size: 5
+        desired_capacity: 2
+        region: "ap-south-1"
+        vpc_zone_identifier:
+          - "{{ pubsub_created.subnet.id }}"  # Assuming pubsub_created.subnet.id contains the subnet ID
+        tags:
+          - key: Name
+            value: demo-asg
+            propagate_at_launch: true
