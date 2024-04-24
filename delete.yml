@@ -1,0 +1,137 @@
+- name: Delete AWS resources
+  hosts: localhost
+  gather_facts: no
+  tasks:
+
+## Detach instances from Security Group
+    - name: Get instances attached to security group
+      ec2_instance_info:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        filters:
+          group-id: "sg-04e4c39667dc9d6cf"
+      register: instances_info
+
+    - name: Detach instances from security group
+      ec2_instance:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        instance_ids: "{{ ami-09cce85cf54d36b29 }}"
+        state: stopped  # You may need to stop the instances before detaching them from the security group
+        wait: true
+      loop: "{{ instances_info.instances }}"
+
+## Delete instances
+    - name: Get information about the instances
+      ec2_instance_facts:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        filters:
+          tag:Name: "vamsi-ec2"
+      register: ec2_instances
+
+    - name: Terminate instances
+      ec2_instance:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        instance_ids: "{{ ami-09cce85cf54d36b29 }}"
+        state: absent
+      loop: "{{ ec2_instances.instances }}"
+
+## Delete Auto Scaling Group
+    - name: Delete Auto Scaling Group
+      ec2_asg:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        name: "vamsi-asg"
+        state: absent
+
+## Delete Launch Configuration
+    - name: Delete Launch Configuration
+      ec2_lc:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        name: "vamsi-launch-config"
+        state: absent
+
+## Delete ELB
+    - name: Delete ELB
+      ec2_elb_lb:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        name: "vamsi-elb"
+        state: absent
+
+
+## Delete Security Group
+    - name: Delete Security Group
+      ec2_group:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        name: "vamsi_sg"
+        state: absent
+
+## Delete Internet Gateway
+    - name: Detach and Delete Internet Gateway
+      ec2_vpc_igw:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        vpc_id: "vpc-0e24e178bf0655dce"
+
+## Delete Subnets
+    - name: Delete Public Subnet
+      ec2_vpc_subnet:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        cidr: "11.0.1.0/24"
+        vpc_id: "vpc-0e24e178bf0655dce"
+
+    - name: Delete Private Subnet
+      ec2_vpc_subnet:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        cidr: "11.0.2.0/24"
+        vpc_id: "vpc-0e24e178bf0655dce"
+
+## Delete Route Tables
+    - name: Delete Private Route Table
+      ec2_vpc_route_table:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        route_table_id: ""
+        vpc_id: "vpc-0e24e178bf0655dce"
+
+    - name: Delete Public Route Table
+      ec2_vpc_route_table:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        route_table_id: ""
+        vpc_id: "vpc-0e24e178bf0655dce"
+
+## Delete VPC
+    - name: Delete VPC
+      ec2_vpc_net:
+        aws_access_key: ""
+        aws_secret_key: ""
+        region: "eu-west-2"
+        state: absent
+        name: "vamsi_vpc"
+        cidr_block: "11.0.0.0/16"
